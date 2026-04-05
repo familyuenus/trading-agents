@@ -478,7 +478,7 @@
 <div class="header">
   <span class="agent-badge">AGENT 01</span>
   <span class="header-title">Screener — Market &amp; Candidate Generator</span><span class="agent-badge" style="background:rgba(66,133,244,0.12);border-color:rgba(66,133,244,0.3);color:#4285f4;margin-left:4px">GEMINI 2.5 FLASH</span>
-  <span class="header-sub" id="ts-display">—</span>
+  <span class="header-sub" id="rpm-badge" style="margin-right:12px;font-size:10px;color:var(--accent)">0/10 RPM</span><span class="header-sub" id="ts-display">—</span>
 </div>
 
 <div class="main">
@@ -694,12 +694,42 @@ function addLog(stage, msg, cls='') {
 // Get your free key at: https://aistudio.google.com/app/apikey
 const GEMINI_API_KEY = document.getElementById('gemini-key')?.value || '';
 
+// ── Rate limit helpers ────────────────────────────────────────────────────
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// RPM tracker — Gemini free tier: 10 RPM
+const rpmTracker = { calls: [], limit: 10, windowMs: 60000 };
+
+async function rpmThrottle() {
+  const now = Date.now();
+  // Drop calls older than 60s
+  rpmTracker.calls = rpmTracker.calls.filter(t => now - t < rpmTracker.windowMs);
+  if (rpmTracker.calls.length >= rpmTracker.limit) {
+    // Wait until the oldest call expires
+    const wait = rpmTracker.windowMs - (now - rpmTracker.calls[0]) + 500;
+    addLog('system', `Rate limit window full — waiting ${Math.ceil(wait/1000)}s before next call…`, 'dim');
+    updateRpmBadge('throttling');
+    await sleep(wait);
+    rpmTracker.calls = rpmTracker.calls.filter(t => Date.now() - t < rpmTracker.windowMs);
+  }
+  rpmTracker.calls.push(Date.now());
+  updateRpmBadge('ok');
+}
+
+function updateRpmBadge(state) {
+  const el = document.getElementById('rpm-badge');
+  if (!el) return;
+  const used = rpmTracker.calls.filter(t => Date.now() - t < rpmTracker.windowMs).length;
+  el.textContent = `${used}/${rpmTracker.limit} RPM`;
+  el.style.color = state === 'throttling' ? 'var(--warn)' : used >= 8 ? 'var(--warn)' : 'var(--accent)';
+}
+
+// ── Gemini API call with retry + exponential backoff ─────────────────────
 async function callGemini(systemPrompt, userMsg, maxTokens = 3000) {
   const key = document.getElementById('gemini-key').value.trim();
   if (!key) throw new Error('Gemini API key is required — enter it in the config panel.');
 
   const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
-
   const body = {
     system_instruction: { parts: [{ text: systemPrompt }] },
     contents: [{ role: 'user', parts: [{ text: userMsg }] }],
@@ -707,36 +737,56 @@ async function callGemini(systemPrompt, userMsg, maxTokens = 3000) {
     generationConfig: { maxOutputTokens: maxTokens, temperature: 0.2 }
   };
 
-  let resp;
-  try {
-    resp = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': key
-      },
-      body: JSON.stringify(body)
-    });
-  } catch (networkErr) {
-    throw new Error(
-      'Network error — check your internet connection. ' +
-      'If on a corporate network, a firewall may be blocking googleapis.com. ' +
-      'Error detail: ' + (networkErr.message || networkErr)
-    );
-  }
+  const MAX_RETRIES = 4;
+  let lastErr;
 
-  if (!resp.ok) {
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    // Throttle to stay under 10 RPM before every attempt
+    await rpmThrottle();
+
+    let resp;
+    try {
+      resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+        body: JSON.stringify(body)
+      });
+    } catch (networkErr) {
+      throw new Error('Network error — check connection or firewall blocking googleapis.com. Detail: ' + networkErr.message);
+    }
+
+    // Success
+    if (resp.ok) {
+      const data = await resp.json();
+      const parts = data?.candidates?.[0]?.content?.parts ?? [];
+      const text = parts.filter(p => p.text).map(p => p.text).join('\n');
+      if (!text) throw new Error('Gemini returned an empty response — check API key and quota.');
+      return text;
+    }
+
+    // 429 — rate limited: backoff and retry
+    if (resp.status === 429) {
+      // Respect Retry-After header if present, else exponential backoff
+      const retryAfter = parseInt(resp.headers.get('Retry-After') || '0');
+      const backoff = retryAfter > 0 ? retryAfter * 1000 : Math.min(8000 * Math.pow(2, attempt), 64000);
+      const waitSec = Math.ceil(backoff / 1000);
+      addLog('system', `⏳ 429 rate limit — waiting ${waitSec}s then retrying (attempt ${attempt + 1}/${MAX_RETRIES})…`, 'dim');
+      updateRpmBadge('throttling');
+      // Clear rpm tracker since we were rate limited — reset the window
+      rpmTracker.calls = [];
+      await sleep(backoff);
+      lastErr = `429 after ${attempt + 1} attempts`;
+      continue;
+    }
+
+    // Other errors — don't retry
     const errText = await resp.text();
     let msg = `Gemini API error ${resp.status}`;
     try { msg += ': ' + (JSON.parse(errText).error?.message || errText.slice(0, 200)); } catch {}
     throw new Error(msg);
   }
 
-  const data = await resp.json();
-  const parts = data?.candidates?.[0]?.content?.parts ?? [];
-  const text = parts.filter(p => p.text).map(p => p.text).join('\n');
-  if (!text) throw new Error('Gemini returned an empty response. Check your API key and quota.');
-  return text;
+  throw new Error(`Gemini quota exhausted after ${MAX_RETRIES} retries. Wait a minute and try again, or check your quota at ai.dev/rate-limit`);
 }
 
 const callClaude = callGemini;
@@ -883,6 +933,10 @@ Rules: phase must be EASY or BLOOD. vix_signal must be low/moderate/elevated/ext
     // ════════════════════════════════════════════
     // STAGE 1.2 — Sector rotation
     // ════════════════════════════════════════════
+    // Inter-stage delay — avoid bursting 2 calls back-to-back
+    addLog('system', 'Waiting 7s between stages to respect free tier rate limits…', 'dim');
+    await sleep(7000);
+
     setStage('st-sector', 'active');
     addLog('sector', 'Scanning sector rotation…');
     addLog('sector', 'Searching: leading sectors this week by RS…', 'dim');
@@ -910,6 +964,9 @@ Rules: weekly_momentum must be strong/moderate/weak. rs_score must be integer. N
     // ════════════════════════════════════════════
     // STAGE 1.3 — Candidate screener
     // ════════════════════════════════════════════
+    addLog('system', 'Waiting 7s between stages to respect free tier rate limits…', 'dim');
+    await sleep(7000);
+
     setStage('st-screen', 'active');
     addLog('screen', `Generating top ${topN} candidates…`);
 
