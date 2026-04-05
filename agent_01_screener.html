@@ -1,0 +1,1104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Agent 01 — Screener (Gemini)</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+
+  :root {
+    --bg:        #0a0c0f;
+    --bg2:       #111318;
+    --bg3:       #181c23;
+    --border:    #222830;
+    --border2:   #2e3540;
+    --accent:    #00d4aa;
+    --accent2:   #0099ff;
+    --warn:      #f5a623;
+    --danger:    #e84040;
+    --text:      #c8d0dc;
+    --text2:     #6b7685;
+    --text3:     #3d4654;
+    --green:     #00d4aa;
+    --mono:      'IBM Plex Mono', monospace;
+    --sans:      'IBM Plex Sans', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13px;
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+
+  /* ── Header ── */
+  .header {
+    border-bottom: 1px solid var(--border);
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--bg2);
+  }
+  .agent-badge {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--accent);
+    background: rgba(0,212,170,0.1);
+    border: 1px solid rgba(0,212,170,0.25);
+    padding: 3px 8px;
+    border-radius: 3px;
+    letter-spacing: 0.08em;
+  }
+  .header-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .header-sub {
+    font-size: 11px;
+    color: var(--text2);
+    margin-left: auto;
+    font-family: var(--mono);
+  }
+
+  /* ── Layout ── */
+  .main {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    height: calc(100vh - 49px);
+  }
+
+  /* ── Left panel: controls ── */
+  .controls {
+    border-right: 1px solid var(--border);
+    background: var(--bg2);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .section {
+    border-bottom: 1px solid var(--border);
+    padding: 16px;
+  }
+  .section-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    color: var(--text2);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+
+  /* Stage pipeline */
+  .stages { display: flex; flex-direction: column; gap: 4px; }
+  .stage-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 5px;
+    border: 1px solid transparent;
+    cursor: default;
+    transition: all 0.15s;
+  }
+  .stage-item.active {
+    background: rgba(0,212,170,0.06);
+    border-color: rgba(0,212,170,0.2);
+  }
+  .stage-item.done {
+    background: rgba(0,212,170,0.03);
+    border-color: rgba(0,212,170,0.08);
+  }
+  .stage-item.waiting {
+    opacity: 0.4;
+  }
+  .stage-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--border2);
+    transition: all 0.3s;
+  }
+  .stage-item.active .stage-dot { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+  .stage-item.done .stage-dot { background: var(--accent); }
+  .stage-item.error .stage-dot { background: var(--danger); }
+  .stage-num {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text2);
+    min-width: 16px;
+  }
+  .stage-name { font-size: 12px; color: var(--text); flex: 1; }
+  .stage-tag {
+    font-family: var(--mono);
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 2px;
+    background: rgba(255,255,255,0.04);
+    color: var(--text2);
+  }
+  .stage-item.active .stage-tag { color: var(--accent); background: rgba(0,212,170,0.1); }
+
+  /* Config fields */
+  .field { margin-bottom: 12px; }
+  .field:last-child { margin-bottom: 0; }
+  .field label {
+    display: block;
+    font-size: 11px;
+    color: var(--text2);
+    margin-bottom: 5px;
+  }
+  .field select, .field input {
+    width: 100%;
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 7px 10px;
+    border-radius: 4px;
+    outline: none;
+    transition: border-color 0.15s;
+    appearance: none;
+  }
+  .field select:focus, .field input:focus { border-color: var(--accent); }
+
+  /* Minervini filters */
+  .filter-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .filter-row:last-child { border-bottom: none; }
+  .filter-label { font-size: 11px; color: var(--text2); }
+  .filter-val {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent);
+  }
+
+  /* Run button */
+  .run-btn {
+    margin: 16px;
+    padding: 11px;
+    background: var(--accent);
+    color: #000;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.15s;
+    width: calc(100% - 32px);
+  }
+  .run-btn:hover { background: #00eec0; }
+  .run-btn:disabled { background: var(--border2); color: var(--text2); cursor: not-allowed; }
+
+  /* Output panel */
+  .output {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg);
+  }
+
+  .output-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg2);
+    padding: 0 20px;
+  }
+  .tab {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    color: var(--text2);
+    padding: 12px 16px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: all 0.15s;
+    text-transform: uppercase;
+  }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab:hover:not(.active) { color: var(--text); }
+
+  .tab-content { display: none; flex: 1; overflow: hidden; }
+  .tab-content.active { display: flex; flex-direction: column; }
+
+  /* Stream log */
+  .stream-box {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.8;
+  }
+  .stream-box::-webkit-scrollbar { width: 4px; }
+  .stream-box::-webkit-scrollbar-track { background: transparent; }
+  .stream-box::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+  .log-line { display: flex; gap: 12px; margin-bottom: 2px; }
+  .log-ts { color: var(--text3); flex-shrink: 0; }
+  .log-stage { min-width: 80px; flex-shrink: 0; }
+  .log-stage.macro { color: var(--accent2); }
+  .log-stage.sector { color: var(--warn); }
+  .log-stage.screen { color: var(--accent); }
+  .log-stage.system { color: var(--text3); }
+  .log-stage.error { color: var(--danger); }
+  .log-msg { color: var(--text); white-space: pre-wrap; word-break: break-word; flex: 1; }
+  .log-msg.dim { color: var(--text2); }
+
+  /* Results tab */
+  .results-box {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+  }
+
+  .market-banner {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .market-card {
+    flex: 1;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+  .market-card.bull { border-color: rgba(0,212,170,0.3); }
+  .market-card.bear { border-color: rgba(232,64,64,0.3); }
+  .market-card.neutral { border-color: rgba(245,166,35,0.3); }
+  .mc-label { font-size: 10px; color: var(--text2); margin-bottom: 4px; font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.08em; }
+  .mc-value { font-size: 18px; font-weight: 600; color: var(--text); }
+  .mc-sub { font-size: 10px; color: var(--text2); margin-top: 2px; }
+  .mc-value.green { color: var(--green); }
+  .mc-value.warn { color: var(--warn); }
+  .mc-value.red { color: var(--danger); }
+
+  /* Sector bar */
+  .sector-section { margin-bottom: 20px; }
+  .section-title {
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    color: var(--text2);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sector-bars { display: flex; flex-direction: column; gap: 6px; }
+  .sector-row { display: flex; align-items: center; gap: 10px; }
+  .sector-name { font-size: 11px; color: var(--text); min-width: 140px; }
+  .sector-bar-wrap { flex: 1; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .sector-bar-fill { height: 100%; border-radius: 2px; background: var(--accent); transition: width 0.6s ease; }
+  .sector-rs { font-family: var(--mono); font-size: 10px; color: var(--accent); min-width: 36px; text-align: right; }
+
+  /* Candidate cards */
+  .candidates { display: flex; flex-direction: column; gap: 10px; }
+  .cand-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    transition: border-color 0.15s;
+  }
+  .cand-card:hover { border-color: var(--border2); }
+  .cand-card.rank1 { border-color: rgba(0,212,170,0.35); }
+
+  .cand-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .cand-rank {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text3);
+    min-width: 20px;
+  }
+  .rank1 .cand-rank { color: var(--accent); }
+  .cand-ticker {
+    font-family: var(--mono);
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .cand-name { font-size: 11px; color: var(--text2); flex: 1; }
+  .cand-setup {
+    font-family: var(--mono);
+    font-size: 9px;
+    padding: 3px 7px;
+    border-radius: 3px;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+  }
+  .setup-vcp { background: rgba(0,212,170,0.12); color: var(--accent); border: 1px solid rgba(0,212,170,0.25); }
+  .setup-pp  { background: rgba(0,153,255,0.12); color: var(--accent2); border: 1px solid rgba(0,153,255,0.25); }
+  .setup-met { background: rgba(245,166,35,0.12); color: var(--warn); border: 1px solid rgba(245,166,35,0.25); }
+
+  .cand-body { padding: 12px 14px; display: flex; gap: 20px; }
+  .cand-metrics { display: flex; flex-direction: column; gap: 6px; min-width: 160px; }
+  .metric-row { display: flex; justify-content: space-between; gap: 8px; }
+  .metric-k { font-size: 10px; color: var(--text2); }
+  .metric-v { font-family: var(--mono); font-size: 10px; color: var(--text); }
+  .metric-v.pass { color: var(--green); }
+  .metric-v.warn { color: var(--warn); }
+  .metric-v.fail { color: var(--danger); }
+
+  .cand-reasoning {
+    flex: 1;
+    font-size: 11px;
+    color: var(--text2);
+    line-height: 1.7;
+    border-left: 1px solid var(--border);
+    padding-left: 16px;
+  }
+
+  .cand-footer {
+    padding: 8px 14px;
+    background: rgba(0,0,0,0.2);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-top: 1px solid var(--border);
+  }
+  .cand-caution {
+    font-size: 10px;
+    color: var(--warn);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .pass-badge {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 9px;
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+  }
+  .pass-go { background: rgba(0,212,170,0.15); color: var(--accent); border: 1px solid rgba(0,212,170,0.3); }
+  .pass-caution { background: rgba(245,166,35,0.12); color: var(--warn); border: 1px solid rgba(245,166,35,0.3); }
+
+  /* JSON tab */
+  .json-box {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.8;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: var(--text2);
+  }
+  .json-key { color: var(--accent2); }
+  .json-str { color: var(--warn); }
+  .json-num { color: var(--accent); }
+  .json-bool { color: var(--danger); }
+
+  /* Empty state */
+  .empty-state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: var(--text3);
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .empty-icon { font-size: 28px; opacity: 0.3; margin-bottom: 4px; }
+
+  /* Spinner */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner {
+    display: inline-block;
+    width: 10px; height: 10px;
+    border: 1.5px solid var(--border2);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    vertical-align: middle;
+  }
+
+  /* Pulse dot */
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  .pulse { animation: pulse 1.2s ease-in-out infinite; }
+
+  .copy-btn {
+    font-family: var(--mono);
+    font-size: 10px;
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    color: var(--text2);
+    padding: 4px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  .toolbar {
+    padding: 10px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg2);
+  }
+  .toolbar-label { font-family: var(--mono); font-size: 10px; color: var(--text2); flex: 1; }
+</style>
+</head>
+<body>
+<!-- Header -->
+<div class="header">
+  <span class="agent-badge">AGENT 01</span>
+  <span class="header-title">Screener — Market &amp; Candidate Generator</span><span class="agent-badge" style="background:rgba(66,133,244,0.12);border-color:rgba(66,133,244,0.3);color:#4285f4;margin-left:4px">GEMINI 2.5 FLASH</span>
+  <span class="header-sub" id="ts-display">—</span>
+</div>
+
+<div class="main">
+
+  <!-- Left: Controls -->
+  <div class="controls">
+
+    <div class="section" style="background:rgba(0,212,170,0.04);border-color:rgba(0,212,170,0.2)">
+      <div class="section-label" style="color:var(--accent)">Gemini API key</div>
+      <div class="field">
+        <label>Free key from <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--accent2);text-decoration:none">aistudio.google.com</a></label>
+        <input type="password" id="gemini-key" placeholder="AIza…" autocomplete="off"
+          style="font-size:11px;letter-spacing:0.04em"/>
+      </div>
+      <div style="font-size:10px;color:var(--text2);margin-top:4px;line-height:1.6">
+        Model: gemini-2.5-flash · Free tier: 10 RPM / 250 RPD<br>
+        Key stored in browser only — never sent anywhere except Google
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-label">Pipeline stages</div>
+      <div class="stages">
+        <div class="stage-item waiting" id="st-macro">
+          <div class="stage-dot"></div>
+          <span class="stage-num">1.1</span>
+          <span class="stage-name">Market environment</span>
+          <span class="stage-tag">MACRO</span>
+        </div>
+        <div class="stage-item waiting" id="st-sector">
+          <div class="stage-dot"></div>
+          <span class="stage-num">1.2</span>
+          <span class="stage-name">Sector rotation</span>
+          <span class="stage-tag">SECTOR</span>
+        </div>
+        <div class="stage-item waiting" id="st-screen">
+          <div class="stage-dot"></div>
+          <span class="stage-num">1.3</span>
+          <span class="stage-name">Candidate screen</span>
+          <span class="stage-tag">SCREEN</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-label">Market scope</div>
+      <div class="field">
+        <label>Exchange</label>
+        <select id="cfg-exchange">
+          <option value="US">US (NYSE + NASDAQ)</option>
+          <option value="HK">HK (HKEX)</option>
+          <option value="BOTH">US + HK</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Index benchmark</label>
+        <select id="cfg-index">
+          <option value="SPY">S&amp;P 500 (SPY)</option>
+          <option value="QQQ">NASDAQ 100 (QQQ)</option>
+          <option value="HSI">Hang Seng (HSI)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Candidates to return</label>
+        <select id="cfg-top">
+          <option value="5">Top 5</option>
+          <option value="10">Top 10</option>
+          <option value="3">Top 3</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-label">Minervini filters (active)</div>
+      <div class="filter-row">
+        <span class="filter-label">RS Rank minimum</span>
+        <span class="filter-val">&gt; 70</span>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">Price vs 150MA</span>
+        <span class="filter-val">Above</span>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">Price vs 200MA</span>
+        <span class="filter-val">Above</span>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">200MA direction</span>
+        <span class="filter-val">Uptrend ≥1m</span>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">150MA vs 200MA</span>
+        <span class="filter-val">150 &gt; 200</span>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">Stage</span>
+        <span class="filter-val">Stage 2 only</span>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">Consolidation</span>
+        <span class="filter-val">VCP / PP / MET</span>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-label">Market phase override</div>
+      <div class="field">
+        <label>Force phase (leave auto for AI decision)</label>
+        <select id="cfg-phase">
+          <option value="auto">Auto — let AI decide</option>
+          <option value="easy">Easy period (bull)</option>
+          <option value="blood">Blood period (bear)</option>
+        </select>
+      </div>
+    </div>
+
+    <button class="run-btn" id="run-btn" onclick="runScreener()">▶  RUN SCREENER</button>
+
+  </div>
+
+  <!-- Right: Output -->
+  <div class="output">
+    <div class="output-tabs">
+      <div class="tab active" onclick="switchTab('log')">Stream log</div>
+      <div class="tab" onclick="switchTab('results')">Results</div>
+      <div class="tab" onclick="switchTab('json')">JSON payload</div>
+    </div>
+
+    <!-- Log tab -->
+    <div class="tab-content active" id="tab-log">
+      <div class="stream-box" id="log-box">
+        <div class="empty-state">
+          <div class="empty-icon">◎</div>
+          <div>Awaiting run — configure and press RUN SCREENER</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Results tab -->
+    <div class="tab-content" id="tab-results">
+      <div class="results-box" id="results-box">
+        <div class="empty-state">
+          <div class="empty-icon">◎</div>
+          <div>No results yet</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- JSON tab -->
+    <div class="tab-content" id="tab-json">
+      <div class="toolbar">
+        <span class="toolbar-label" id="json-meta">No payload yet</span>
+        <button class="copy-btn" onclick="copyJson()">Copy JSON</button>
+      </div>
+      <div class="json-box" id="json-box">
+        <span style="color:var(--text3)">// Agent output will appear here after run</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let currentPayload = null;
+let isRunning = false;
+
+// ── Timestamp ──────────────────────────────────────────────────────────────
+function updateTs() {
+  const now = new Date();
+  document.getElementById('ts-display').textContent =
+    now.toLocaleDateString('en-HK',{weekday:'short'}) + ' ' +
+    now.toLocaleTimeString('en-HK',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+updateTs();
+setInterval(updateTs, 1000);
+
+// ── Tab switching ──────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t,i) => {
+    const names = ['log','results','json'];
+    t.classList.toggle('active', names[i] === name);
+  });
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+}
+
+// ── Stage helpers ──────────────────────────────────────────────────────────
+function setStage(id, state) {
+  const el = document.getElementById(id);
+  el.className = 'stage-item ' + state;
+}
+function resetStages() {
+  ['st-macro','st-sector','st-screen'].forEach(id => setStage(id, 'waiting'));
+}
+
+// ── Log helpers ────────────────────────────────────────────────────────────
+let logBox;
+function initLog() {
+  logBox = document.getElementById('log-box');
+  logBox.innerHTML = '';
+}
+function addLog(stage, msg, cls='') {
+  const ts = new Date().toLocaleTimeString('en-HK',{hour12:false});
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  line.innerHTML = `<span class="log-ts">${ts}</span><span class="log-stage ${stage}">[${stage.toUpperCase()}]</span><span class="log-msg ${cls}">${msg}</span>`;
+  logBox.appendChild(line);
+  logBox.scrollTop = logBox.scrollHeight;
+}
+
+// ── API call — Gemini 2.5 Flash (free tier) ───────────────────────────────
+// Get your free key at: https://aistudio.google.com/app/apikey
+const GEMINI_API_KEY = document.getElementById('gemini-key')?.value || '';
+
+async function callGemini(systemPrompt, userMsg, maxTokens = 3000) {
+  const key = document.getElementById('gemini-key').value.trim();
+  if (!key) throw new Error('Gemini API key is required — enter it in the config panel.');
+
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+
+  const body = {
+    system_instruction: { parts: [{ text: systemPrompt }] },
+    contents: [{ role: 'user', parts: [{ text: userMsg }] }],
+    tools: [{ google_search: {} }],
+    generationConfig: { maxOutputTokens: maxTokens, temperature: 0.2 }
+  };
+
+  let resp;
+  try {
+    resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': key
+      },
+      body: JSON.stringify(body)
+    });
+  } catch (networkErr) {
+    throw new Error(
+      'Network error — check your internet connection. ' +
+      'If on a corporate network, a firewall may be blocking googleapis.com. ' +
+      'Error detail: ' + (networkErr.message || networkErr)
+    );
+  }
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    let msg = `Gemini API error ${resp.status}`;
+    try { msg += ': ' + (JSON.parse(errText).error?.message || errText.slice(0, 200)); } catch {}
+    throw new Error(msg);
+  }
+
+  const data = await resp.json();
+  const parts = data?.candidates?.[0]?.content?.parts ?? [];
+  const text = parts.filter(p => p.text).map(p => p.text).join('\n');
+  if (!text) throw new Error('Gemini returned an empty response. Check your API key and quota.');
+  return text;
+}
+
+const callClaude = callGemini;
+
+// ── Robust JSON parser ─────────────────────────────────────────────────────
+// Handles: markdown fences, truncated arrays, unescaped quotes in strings,
+// literal newlines inside string values, trailing commas.
+function safeParseJSON(raw, fallback) {
+  // 1. Strip markdown fences
+  let text = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+
+  // 2. Extract the outermost JSON object
+  const start = text.indexOf('{');
+  if (start === -1) return fallback;
+  text = text.slice(start);
+
+  // Find the matching closing brace by tracking depth
+  let depth = 0, end = -1;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '{') depth++;
+    else if (text[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
+  }
+  if (end !== -1) text = text.slice(0, end + 1);
+
+  // 3. Fix truncated arrays — if the JSON ends mid-array, close it gracefully
+  // Remove trailing comma before attempting repairs
+  text = text.replace(/,\s*([\]}])/g, '$1');
+
+  // 4. Attempt 1: direct parse
+  try { return JSON.parse(text); } catch(e1) {}
+
+  // 5. Attempt 2: sanitise unescaped newlines and tabs inside string values
+  //    Replace literal \n and \t inside quoted strings
+  try {
+    const sanitised = text.replace(/"((?:[^"\\]|\\.)*)"/gs, (match, inner) => {
+      const fixed = inner
+        .replace(/\n/g, '\\n')
+        .replace(/\r/g, '')
+        .replace(/\t/g, ' ');
+      return `"${fixed}"`;
+    });
+    return JSON.parse(sanitised);
+  } catch(e2) {}
+
+  // 6. Attempt 3: for arrays — if candidates/sectors array is truncated,
+  //    find the last complete object in the array and close the structure
+  try {
+    // Close any open arrays and objects
+    const depth_arr = [];
+    let inStr = false, escape = false;
+    let lastCompletePos = 0;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (escape) { escape = false; continue; }
+      if (c === '\\') { escape = true; continue; }
+      if (c === '"') { inStr = !inStr; continue; }
+      if (inStr) continue;
+      if (c === '{' || c === '[') depth_arr.push(c);
+      else if (c === '}' || c === ']') {
+        depth_arr.pop();
+        if (depth_arr.length === 1) lastCompletePos = i; // last complete item in top array
+      }
+    }
+    // Truncate to last complete item and close
+    let repaired = text.slice(0, lastCompletePos + 1);
+    // Close remaining open brackets
+    const opens = (repaired.match(/\[/g)||[]).length - (repaired.match(/\]/g)||[]).length;
+    const openBraces = (repaired.match(/\{/g)||[]).length - (repaired.match(/\}/g)||[]).length;
+    repaired += ']'.repeat(Math.max(0, opens)) + '}'.repeat(Math.max(0, openBraces));
+    repaired = repaired.replace(/,\s*([\]}])/g, '$1');
+    return JSON.parse(repaired);
+  } catch(e3) {}
+
+  // 7. Final fallback
+  addLog('system', `JSON parse failed — using fallback. Raw snippet: ${raw.slice(0,120)}`, 'dim');
+  return fallback;
+}
+
+// ── Main screener runner ───────────────────────────────────────────────────
+async function runScreener() {
+  if (isRunning) return;
+  isRunning = true;
+  currentPayload = null;
+
+  const exchange = document.getElementById('cfg-exchange').value;
+  const index    = document.getElementById('cfg-index').value;
+  const topN     = document.getElementById('cfg-top').value;
+  const phase    = document.getElementById('cfg-phase').value;
+
+  document.getElementById('run-btn').disabled = true;
+  document.getElementById('run-btn').innerHTML = '<span class="spinner"></span>  RUNNING…';
+  resetStages();
+  initLog();
+  switchTab('log');
+
+  const today = new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
+
+  addLog('system', `Agent 01 initialised — ${today}`, 'dim');
+  addLog('system', `Config: exchange=${exchange}, benchmark=${index}, topN=${topN}, phase=${phase}`, 'dim');
+  addLog('system', '─'.repeat(60), 'dim');
+
+  try {
+
+    // ════════════════════════════════════════════
+    // STAGE 1.1 — Market environment
+    // ════════════════════════════════════════════
+    setStage('st-macro', 'active');
+    addLog('macro', 'Starting market environment check…');
+    addLog('macro', `Searching: ${index} trend, VIX, macro headlines…`, 'dim');
+
+    const macroSystem = `You are a market environment analyst using the Mark Minervini Super Performance method.
+Today is ${today}. Your job is to classify the current market into one of two periods:
+- EASY (bull): breakout failure rate < 40%, index in Stage 2 uptrend above rising MAs
+- BLOOD (bear): choppy, no direction, high failure rate — reduce exposure to <25%
+
+${phase !== 'auto' ? `The user has FORCED the phase to: ${phase.toUpperCase()}. Acknowledge this override.` : ''}
+
+Use web search to find: current ${index} price vs 50/150/200 day MA, VIX level, recent macro news.
+
+CRITICAL: Output ONLY a raw JSON object. No markdown. No explanation. Nothing before or after the JSON.
+Use this exact shape:
+{"phase":"EASY","phase_confidence":75,"index":"${index}","index_vs_50ma":"above","index_vs_200ma":"above","vix_level":18,"vix_signal":"low","distribution_days":2,"macro_summary":"Single sentence summary no apostrophes","phase_reasoning":"Single sentence reasoning no apostrophes"}
+
+Rules: phase must be EASY or BLOOD. vix_signal must be low/moderate/elevated/extreme. index_vs_50ma and index_vs_200ma must be above or below. vix_level must be a number or null. No apostrophes in string values.`;
+
+    const macroRaw = await callClaude(macroSystem,
+      `Assess the current market environment for ${exchange} stocks using ${index} as benchmark. Today: ${today}.`);
+
+    const macroData = safeParseJSON(macroRaw, { phase:'EASY', phase_confidence:50, index, index_vs_50ma:'above', index_vs_200ma:'above', vix_level:null, vix_signal:'moderate', distribution_days:null, macro_summary:'Could not parse macro data.', phase_reasoning:'Parse fallback.' });
+
+    addLog('macro', `Phase: ${macroData.phase} (confidence: ${macroData.phase_confidence}%)`);
+    addLog('macro', `${index} vs 50MA: ${macroData.index_vs_50ma} | vs 200MA: ${macroData.index_vs_200ma}`);
+    addLog('macro', `VIX: ${macroData.vix_level ?? 'N/A'} — ${macroData.vix_signal}`);
+    addLog('macro', macroData.macro_summary, 'dim');
+
+    if (macroData.phase === 'BLOOD') {
+      addLog('macro', '⚠ BLOOD PERIOD — exposure should be <25%, stops tightened to 4-5%');
+    } else {
+      addLog('macro', '✓ EASY PERIOD — normal exposure rules apply');
+    }
+
+    setStage('st-macro', 'done');
+
+    // ════════════════════════════════════════════
+    // STAGE 1.2 — Sector rotation
+    // ════════════════════════════════════════════
+    setStage('st-sector', 'active');
+    addLog('sector', 'Scanning sector rotation…');
+    addLog('sector', 'Searching: leading sectors this week by RS…', 'dim');
+
+    const sectorSystem = `You are a sector rotation analyst. Today is ${today}.
+Use web search to find the top 5 performing sectors in ${exchange} this week by relative strength vs ${index}.
+
+CRITICAL: Output ONLY a raw JSON object. Zero markdown. Zero explanation. Nothing before or after the JSON.
+Use this exact shape with 5 items in top_sectors:
+{"top_sectors":[{"name":"SECTOR NAME","rs_score":85,"weekly_momentum":"strong","theme":"reason without apostrophes"},{"name":"SECTOR NAME","rs_score":80,"weekly_momentum":"moderate","theme":"reason without apostrophes"},{"name":"SECTOR NAME","rs_score":75,"weekly_momentum":"strong","theme":"reason without apostrophes"},{"name":"SECTOR NAME","rs_score":70,"weekly_momentum":"weak","theme":"reason without apostrophes"},{"name":"SECTOR NAME","rs_score":65,"weekly_momentum":"weak","theme":"reason without apostrophes"}],"rotation_theme":"theme without apostrophes"}
+Rules: weekly_momentum must be strong/moderate/weak. rs_score must be integer. No apostrophes in any string value.`;
+
+    const sectorRaw = await callClaude(sectorSystem,
+      `Identify the top 5 leading sectors for ${exchange} stocks this week vs ${index}. Today: ${today}.`);
+
+    const sectorData = safeParseJSON(sectorRaw, { top_sectors:[], rotation_theme:'Could not parse sector data.' });
+
+    sectorData.top_sectors?.forEach((s,i) => {
+      addLog('sector', `#${i+1} ${s.name} — RS ${s.rs_score} (${s.weekly_momentum}) | ${s.theme}`);
+    });
+    addLog('sector', `Theme: ${sectorData.rotation_theme}`, 'dim');
+
+    setStage('st-sector', 'done');
+
+    // ════════════════════════════════════════════
+    // STAGE 1.3 — Candidate screener
+    // ════════════════════════════════════════════
+    setStage('st-screen', 'active');
+    addLog('screen', `Generating top ${topN} candidates…`);
+
+    const topSectors = sectorData.top_sectors?.slice(0,3).map(s=>s.name).join(', ') || 'Technology, Industrials, Healthcare';
+    addLog('screen', `Focusing on leading sectors: ${topSectors}`, 'dim');
+    addLog('screen', 'Applying Minervini Trend Template: RS>70, Stage 2, above 150/200MA, tight base…', 'dim');
+
+    const screenSystem = `You are a stock screener using the Mark Minervini Super Performance method. Today is ${today}.
+Find ${topN} candidate stocks in ${exchange} from sectors: ${topSectors}. Market phase: ${macroData.phase}.
+
+Minervini Trend Template (all must apply): price above 150MA and 200MA, 150MA above 200MA, 200MA uptrend at least 1 month, RS Rank above 70, Stage 2, tight VCP/PowerPlay/MET base forming.
+
+CRITICAL: Output ONLY a raw JSON object. No markdown fences. No text before or after the JSON.
+Use this exact shape for each candidate (no apostrophes inside any string value):
+{"candidates":[{"rank":1,"ticker":"AAPL","company":"Apple Inc","sector":"Technology","exchange":"US","rs_rank_est":92,"stage":"Stage 2","setup_type":"VCP","above_150ma":true,"above_200ma":true,"ma_verified":false,"consolidation_tight":true,"volume_dryup":"estimated","pivot_est":"N/A","reasoning":"Short factual reason without apostrophes","caution":null}],"screening_note":"Short note without apostrophes"}
+
+Rules:
+- setup_type must be exactly VCP, PowerPlay, or MET
+- above_150ma and above_200ma must be true, false, or the string "estimated"
+- ma_verified must be true or false
+- volume_dryup must be true, false, or the string "estimated"
+- caution must be a string or null
+- Do NOT use apostrophes or internal double-quotes in any string value
+- Keep reasoning under 20 words`;
+
+    const screenRaw = await callClaude(screenSystem,
+      `Screen for the top ${topN} Minervini Trend Template stocks in ${exchange} today (${today}). Focus on sectors: ${topSectors}. Market phase is ${macroData.phase}.`, 3000);
+
+    const screenData = safeParseJSON(screenRaw, { candidates:[], screening_note:'Could not parse screen data.' });
+
+    screenData.candidates?.forEach(c => {
+      const verified = c.ma_verified ? '✓' : '~est';
+      addLog('screen', `#${c.rank} ${c.ticker} — ${c.setup_type} | RS~${c.rs_rank_est} | MA:${verified} | Pivot:${c.pivot_est}`);
+      if (c.caution) addLog('screen', `   ⚠ ${c.caution}`, 'dim');
+    });
+    if (screenData.screening_note) {
+      addLog('screen', `Note: ${screenData.screening_note}`, 'dim');
+    }
+
+    setStage('st-screen', 'done');
+
+    // ════════════════════════════════════════════
+    // Assemble final payload
+    // ════════════════════════════════════════════
+    currentPayload = {
+      agent: 'agent_01_screener',
+      version: '1.0',
+      timestamp: new Date().toISOString(),
+      config: { exchange, index, topN, phase },
+      market: macroData,
+      sector_rotation: sectorData,
+      candidates: screenData.candidates || [],
+      screening_note: screenData.screening_note || '',
+      next_agent: 'agent_02_extraction'
+    };
+
+    addLog('system', '─'.repeat(60), 'dim');
+    addLog('system', `✓ Screener complete — ${screenData.candidates?.length || 0} candidates ready`);
+    addLog('system', 'Switch to Results tab to review. JSON payload ready for Agent 02.', 'dim');
+
+    renderResults(currentPayload);
+    renderJson(currentPayload);
+
+  } catch (err) {
+    addLog('error', `Fatal error: ${err.message}`);
+    resetStages();
+    ['st-macro','st-sector','st-screen'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el.classList.contains('active') || el.classList.contains('done')) {
+        setStage(id, 'error');
+      }
+    });
+  }
+
+  document.getElementById('run-btn').disabled = false;
+  document.getElementById('run-btn').innerHTML = '▶  RUN SCREENER';
+  isRunning = false;
+}
+
+// ── Render Results ─────────────────────────────────────────────────────────
+function renderResults(payload) {
+  const box = document.getElementById('results-box');
+  const m = payload.market;
+  const phaseClass = m.phase === 'EASY' ? 'bull' : 'bear';
+  const phaseColor = m.phase === 'EASY' ? 'green' : 'red';
+  const vixColor   = m.vix_signal === 'low' ? 'green' : m.vix_signal === 'extreme' ? 'red' : 'warn';
+
+  let html = `
+  <div class="market-banner">
+    <div class="market-card ${phaseClass}">
+      <div class="mc-label">Market phase</div>
+      <div class="mc-value ${phaseColor}">${m.phase}</div>
+      <div class="mc-sub">Confidence: ${m.phase_confidence}%</div>
+    </div>
+    <div class="market-card">
+      <div class="mc-label">VIX signal</div>
+      <div class="mc-value ${vixColor}">${m.vix_level ?? 'N/A'}</div>
+      <div class="mc-sub">${m.vix_signal?.toUpperCase()}</div>
+    </div>
+    <div class="market-card">
+      <div class="mc-label">${m.index} vs MAs</div>
+      <div class="mc-value" style="font-size:13px;line-height:1.6">
+        50MA: <span class="${m.index_vs_50ma==='above'?'green':'red'}">${m.index_vs_50ma}</span><br>
+        200MA: <span class="${m.index_vs_200ma==='above'?'green':'red'}">${m.index_vs_200ma}</span>
+      </div>
+    </div>
+  </div>`;
+
+  // Sector bars
+  if (payload.sector_rotation?.top_sectors?.length) {
+    html += `<div class="sector-section">
+      <div class="section-title">Sector rotation — leading sectors</div>
+      <div class="sector-bars">`;
+    payload.sector_rotation.top_sectors.forEach(s => {
+      html += `<div class="sector-row">
+        <span class="sector-name">${s.name}</span>
+        <div class="sector-bar-wrap"><div class="sector-bar-fill" style="width:${s.rs_score}%"></div></div>
+        <span class="sector-rs">RS ${s.rs_score}</span>
+      </div>`;
+    });
+    html += `</div></div>`;
+  }
+
+  // Candidates
+  html += `<div class="section-title">Candidates — top ${payload.candidates.length} screened</div>
+  <div class="candidates">`;
+
+  payload.candidates.forEach(c => {
+    const setupCls = c.setup_type==='VCP'?'setup-vcp':c.setup_type==='PowerPlay'?'setup-pp':'setup-met';
+    const rankCls  = c.rank === 1 ? 'rank1' : '';
+    const rsColor  = c.rs_rank_est >= 89 ? 'pass' : c.rs_rank_est >= 70 ? '' : 'fail';
+    const maColor  = c.above_150ma===true && c.above_200ma===true ? 'pass' : c.ma_verified===false ? 'warn' : 'fail';
+    const volColor = c.volume_dryup===true ? 'pass' : c.volume_dryup==='estimated' ? 'warn' : 'fail';
+    const passGo   = !c.caution ? 'pass-go' : 'pass-caution';
+    const passLabel= !c.caution ? 'PASS → AG02' : 'CAUTION';
+
+    html += `<div class="cand-card ${rankCls}">
+      <div class="cand-header">
+        <span class="cand-rank">#${c.rank}</span>
+        <span class="cand-ticker">${c.ticker}</span>
+        <span class="cand-name">${c.company}</span>
+        <span class="cand-setup ${setupCls}">${c.setup_type}</span>
+      </div>
+      <div class="cand-body">
+        <div class="cand-metrics">
+          <div class="metric-row"><span class="metric-k">Sector</span><span class="metric-v">${c.sector}</span></div>
+          <div class="metric-row"><span class="metric-k">RS Rank (est)</span><span class="metric-v ${rsColor}">${c.rs_rank_est}</span></div>
+          <div class="metric-row"><span class="metric-k">Above MAs</span><span class="metric-v ${maColor}">${c.above_150ma===true&&c.above_200ma===true?'✓ Both':'~ Est'}</span></div>
+          <div class="metric-row"><span class="metric-k">Volume dry-up</span><span class="metric-v ${volColor}">${c.volume_dryup===true?'✓ Yes':c.volume_dryup==='estimated'?'~ Est':'✗ No'}</span></div>
+          <div class="metric-row"><span class="metric-k">Pivot est.</span><span class="metric-v">${c.pivot_est}</span></div>
+          <div class="metric-row"><span class="metric-k">MA verified</span><span class="metric-v ${c.ma_verified?'pass':'warn'}">${c.ma_verified?'Yes':'Est only'}</span></div>
+        </div>
+        <div class="cand-reasoning">${c.reasoning}</div>
+      </div>
+      <div class="cand-footer">
+        ${c.caution ? `<span class="cand-caution">⚠ ${c.caution}</span>` : ''}
+        <span class="pass-badge ${passGo}" style="margin-left:auto">${passLabel}</span>
+      </div>
+    </div>`;
+  });
+
+  html += `</div>`;
+  box.innerHTML = html;
+}
+
+// ── Render JSON ────────────────────────────────────────────────────────────
+function renderJson(payload) {
+  const box = document.getElementById('json-box');
+  const meta = document.getElementById('json-meta');
+  const raw = JSON.stringify(payload, null, 2);
+
+  // Syntax highlight
+  const highlighted = raw
+    .replace(/("[\w_]+"):/g, '<span class="json-key">$1</span>:')
+    .replace(/: (".*?")/g, ': <span class="json-str">$1</span>')
+    .replace(/: (\d+\.?\d*)/g, ': <span class="json-num">$1</span>')
+    .replace(/: (true|false|null)/g, ': <span class="json-bool">$1</span>');
+
+  box.innerHTML = highlighted;
+  meta.textContent = `agent_01_output.json — ${payload.candidates?.length || 0} candidates — ${new Date().toLocaleTimeString()}`;
+}
+
+function copyJson() {
+  if (!currentPayload) return;
+  navigator.clipboard.writeText(JSON.stringify(currentPayload, null, 2));
+  const btn = document.querySelector('.copy-btn');
+  btn.textContent = 'Copied!';
+  setTimeout(() => btn.textContent = 'Copy JSON', 1500);
+}
+</script>
+</body>
+</html>
