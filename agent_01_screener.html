@@ -725,7 +725,7 @@ function updateRpmBadge(state) {
 }
 
 // ── Gemini API call with retry + exponential backoff ─────────────────────
-async function callGemini(systemPrompt, userMsg, maxTokens = 3000) {
+async function callGemini(systemPrompt, userMsg, maxTokens = 3000, useSearch = true) {
   const key = document.getElementById('gemini-key').value.trim();
   if (!key) throw new Error('Gemini API key is required — enter it in the config panel.');
 
@@ -733,7 +733,7 @@ async function callGemini(systemPrompt, userMsg, maxTokens = 3000) {
   const body = {
     system_instruction: { parts: [{ text: systemPrompt }] },
     contents: [{ role: 'user', parts: [{ text: userMsg }] }],
-    tools: [{ google_search: {} }],
+    ...(useSearch ? { tools: [{ google_search: {} }] } : {}),
     generationConfig: { maxOutputTokens: maxTokens, temperature: 0.2 }
   };
 
@@ -759,8 +759,17 @@ async function callGemini(systemPrompt, userMsg, maxTokens = 3000) {
     if (resp.ok) {
       const data = await resp.json();
       const parts = data?.candidates?.[0]?.content?.parts ?? [];
-      const text = parts.filter(p => p.text).map(p => p.text).join('\n');
-      if (!text) throw new Error('Gemini returned an empty response — check API key and quota.');
+      // Log ALL part types for debugging
+      const partTypes = parts.map(p => Object.keys(p).join('/')).join(', ');
+      addLog('system', `Gemini parts: [${partTypes}]`, 'dim');
+      // Collect text from all text-bearing parts
+      let text = parts.filter(p => p.text).map(p => p.text).join('\n');
+      // Fallback: check inlineData or other part shapes
+      if (!text) {
+        addLog('system', `No text parts — full response: ${JSON.stringify(data).slice(0,300)}`, 'dim');
+        throw new Error('Gemini returned no text content. The google_search tool may have consumed the response. Check stream log.');
+      }
+      addLog('system', `Raw text snippet: ${text.slice(0,120).replace(/\n/g,' ')}`, 'dim');
       return text;
     }
 
@@ -861,7 +870,7 @@ function safeParseJSON(raw, fallback) {
   } catch(e3) {}
 
   // 7. Final fallback
-  addLog('system', `JSON parse failed — using fallback. Raw snippet: ${raw.slice(0,120)}`, 'dim');
+  addLog('system', `JSON parse all attempts failed. Raw (first 300): ${raw.slice(0,300).replace(/\n/g,' ')}`, 'dim');
   return fallback;
 }
 
@@ -906,14 +915,23 @@ ${phase !== 'auto' ? `The user has FORCED the phase to: ${phase.toUpperCase()}. 
 
 Use web search to find: current ${index} price vs 50/150/200 day MA, VIX level, recent macro news.
 
+Use your knowledge of current market conditions (your training data) combined with the Minervini rules below.
+Do NOT look up live prices. Classify based on trend structure and regime signals you know.
+
+Minervini phase rules:
+- EASY: index in Stage 2 uptrend above rising 50/150/200MA, breakout failure rate below 40 percent
+- BLOOD: index choppy or below key MAs, high breakout failure rate, reduce exposure below 25 percent
+
 CRITICAL: Output ONLY a raw JSON object. No markdown. No explanation. Nothing before or after the JSON.
-Use this exact shape:
-{"phase":"EASY","phase_confidence":75,"index":"${index}","index_vs_50ma":"above","index_vs_200ma":"above","vix_level":18,"vix_signal":"low","distribution_days":2,"macro_summary":"Single sentence summary no apostrophes","phase_reasoning":"Single sentence reasoning no apostrophes"}
+Use this exact shape (replace values, keep all keys):
+{"phase":"EASY","phase_confidence":75,"index":"SPY","index_vs_50ma":"above","index_vs_200ma":"above","vix_level":18,"vix_signal":"low","distribution_days":2,"macro_summary":"Brief market summary without apostrophes","phase_reasoning":"Brief Minervini phase reasoning without apostrophes"}
 
-Rules: phase must be EASY or BLOOD. vix_signal must be low/moderate/elevated/extreme. index_vs_50ma and index_vs_200ma must be above or below. vix_level must be a number or null. No apostrophes in string values.`;
+Rules: phase must be EASY or BLOOD. vix_signal must be low or moderate or elevated or extreme. index_vs_50ma and index_vs_200ma must be above or below. vix_level must be a number or null. No apostrophes in any string value.`;
 
+    // Macro stage: pure reasoning — no google_search to avoid grounding wrapping the JSON
     const macroRaw = await callClaude(macroSystem,
-      `Assess the current market environment for ${exchange} stocks using ${index} as benchmark. Today: ${today}.`);
+      `Assess the current market environment for ${exchange} stocks using ${index} as benchmark. Today: ${today}.`,
+      2000, false);
 
     const macroData = safeParseJSON(macroRaw, { phase:'EASY', phase_confidence:50, index, index_vs_50ma:'above', index_vs_200ma:'above', vix_level:null, vix_signal:'moderate', distribution_days:null, macro_summary:'Could not parse macro data.', phase_reasoning:'Parse fallback.' });
 
